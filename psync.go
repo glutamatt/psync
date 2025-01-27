@@ -188,9 +188,29 @@ func dispatcher() {
 // is discovered, it is created on the destination side, and then inserted into
 // the work queue through the dispatcher channel.
 func copyDir(id uint) {
+
+	printCurrent := func(dir string) {}
+
+	{
+		if id == 0 {
+			printer := time.NewTicker(5 * time.Second)
+			under := printCurrent
+			printCurrent = func(dir string) {
+				select {
+				case <-printer.C:
+					fmt.Printf("copying: %v\n", dir)
+				default:
+				}
+
+				under(dir)
+			}
+		}
+	}
+
 	for {
 		// read next directory to handle
 		dir := <-wch
+		printCurrent(dir)
 		if verbose {
 			fmt.Printf("[%d] Handling directory %s%s\n", id, src, dir)
 		}
@@ -310,7 +330,7 @@ func copyFile(id uint) {
 
 			// open destination file for writing
 			perm := mode.Perm()
-			wr, err := os.OpenFile(dest+file, os.O_WRONLY|os.O_CREATE, perm)
+			wr, err := os.OpenFile(dest+file, os.O_WRONLY|os.O_CREATE|syscall.O_DIRECT, perm)
 			if err != nil {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
