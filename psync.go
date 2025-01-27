@@ -22,13 +22,20 @@ type Counter struct {
 	files, bytes uint64
 }
 
+type File struct {
+	name string
+	info os.FileInfo
+}
+
 // Buffer, Channels and Synchronization
 var (
 	buffer   [][BUFSIZE]byte
 	counters []Counter
-	dch      = make(chan string, 100) // dispatcher channel - get work into work queue
-	wch      = make(chan string, 100) // worker channel - get work from work queue to copy thread
-	wg       sync.WaitGroup           // waitgroup for work queue length
+	dch      = make(chan string, 1000) // dispatcher channel - get work into work queue
+	wch      = make(chan string, 1000) // worker channel - get work from work queue to copy thread
+	fch      = make(chan File, 1000)   // file channel
+	wg       sync.WaitGroup            // waitgroup for work queue length
+	wgf      sync.WaitGroup            // waitgroup for work queue length
 )
 
 // Commandline Flags
@@ -59,9 +66,11 @@ func main() {
 	go dispatcher()
 	for i := uint(0); i < threads; i++ {
 		go copyDir(i)
+		go copyFile(i)
 	}
 
 	// start copying top level directory
+	wgf.Add(int(threads))
 	wg.Add(1)
 	dch <- ""
 
@@ -91,6 +100,8 @@ func main() {
 
 	// wait for work queue to get empty
 	wg.Wait()
+	close(fch)
+	wgf.Wait()
 }
 
 // Function flags parses the command line flags and checks them for sanity.
@@ -221,7 +232,7 @@ func copyDir(id uint) {
 					fmt.Printf("[%d] Copying %s%s/%s to %s%s/%s\n",
 						id, src, dir, fname, dest, dir, fname)
 				}
-				copyFile(id, dir+"/"+fname, f)
+				fch <- File{name: dir + "/" + fname, info: f}
 			}
 		}
 		finfo, err := os.Stat(src + dir)
@@ -248,86 +259,91 @@ func copyDir(id uint) {
 }
 
 // Function copyFile copies a file from the source to the destination directory.
-func copyFile(id uint, file string, f os.FileInfo) {
-	mode := f.Mode()
-	switch {
-
-	case mode&os.ModeSymlink != 0: // symbolic link
-		// read link
-		link, err := os.Readlink(src + file)
-		if err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "WARNING - link %s disappeared while copying %s\n", src+file, err)
+func copyFile(id uint) {
+	cpf := func(file string, f os.FileInfo) {
+		mode := f.Mode()
+		switch {
+		case mode&os.ModeSymlink != 0: // symbolic link
+			// read link
+			link, err := os.Readlink(src + file)
+			if err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "WARNING - link %s disappeared while copying %s\n", src+file, err)
+				}
+				return
 			}
-			return
-		}
 
-		// write link to destination
-		err = os.Symlink(link, dest+file)
-		if err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "WARNING - link %s could not be created: %s\n", dest+file, err)
+			// write link to destination
+			err = os.Symlink(link, dest+file)
+			if err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "WARNING - link %s could not be created: %s\n", dest+file, err)
+				}
+				return
 			}
-			return
-		}
 
-		// preserve owner of symbolic link
-		if owner {
-			preserveOwner(dest+file, f, "link")
-		}
-		// preserving the timestamps of links seems not be supported in Go
-		// TODO: it should be possible by using the futimesat system call,
-		// see https://github.com/golang/go/issues/3951
-		//if times {
-		//	preserveTimes(dest+file, f, "link")
-		//}
-
-	case mode&(os.ModeDevice|os.ModeNamedPipe|os.ModeSocket) != 0: // special files
-	// TODO: not yet implemented
-
-	default:
-		// copy regular file
-		// open source file for reading
-		rd, err := os.Open(src + file)
-		if err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "WARNING - file %s disappeared while copying: %s\n", src+file, err)
+			// preserve owner of symbolic link
+			if owner {
+				preserveOwner(dest+file, f, "link")
 			}
-			return
-		}
-		defer rd.Close()
+			// preserving the timestamps of links seems not be supported in Go
+			// TODO: it should be possible by using the futimesat system call,
+			// see https://github.com/golang/go/issues/3951
+			//if times {
+			//	preserveTimes(dest+file, f, "link")
+			//}
 
-		// open destination file for writing
-		perm := mode.Perm()
-		wr, err := os.OpenFile(dest+file, os.O_WRONLY|os.O_CREATE, perm)
-		if err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
+		case mode&(os.ModeDevice|os.ModeNamedPipe|os.ModeSocket) != 0: // special files
+		// TODO: not yet implemented
+
+		default:
+			// copy regular file
+			// open source file for reading
+			rd, err := os.Open(src + file)
+			if err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "WARNING - file %s disappeared while copying: %s\n", src+file, err)
+				}
+				return
 			}
-			return
-		}
-		defer wr.Close()
+			defer rd.Close()
 
-		// copy data
-		copied, err := io.CopyBuffer(wr, rd, buffer[id][:])
-		if err != nil {
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
+			// open destination file for writing
+			perm := mode.Perm()
+			wr, err := os.OpenFile(dest+file, os.O_WRONLY|os.O_CREATE, perm)
+			if err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
+				}
+				return
 			}
-			return
-		}
+			defer wr.Close()
 
-		counters[id].bytes += uint64(copied)
-		counters[id].files++
+			// copy data
+			copied, err := io.CopyBuffer(wr, rd, buffer[id][:])
+			if err != nil {
+				if !quiet {
+					fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
+				}
+				return
+			}
 
-		if owner {
-			preserveOwner(dest+file, f, "file")
-		}
-		if times {
-			preserveTimes(dest+file, f, "file")
-		}
+			counters[id].bytes += uint64(copied)
+			counters[id].files++
 
+			if owner {
+				preserveOwner(dest+file, f, "file")
+			}
+			if times {
+				preserveTimes(dest+file, f, "file")
+			}
+		}
 	}
+
+	for fcp := range fch {
+		cpf(fcp.name, fcp.info)
+	}
+	wgf.Done()
 }
 
 // Function preserveOwner transfers the ownership information from the source to
