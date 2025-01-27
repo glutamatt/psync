@@ -16,14 +16,19 @@ import (
 )
 
 // BUFSIZE defines the size of the buffer used for copying. It is currently 64kB.
-const BUFSIZE = 64 * 1024
+const BUFSIZE = 1024 * 1024
+
+type Counter struct {
+	files, bytes uint64
+}
 
 // Buffer, Channels and Synchronization
 var (
-	buffer [][BUFSIZE]byte
-	dch    = make(chan string, 100) // dispatcher channel - get work into work queue
-	wch    = make(chan string, 100) // worker channel - get work from work queue to copy thread
-	wg     sync.WaitGroup           // waitgroup for work queue length
+	buffer   [][BUFSIZE]byte
+	counters []Counter
+	dch      = make(chan string, 100) // dispatcher channel - get work into work queue
+	wch      = make(chan string, 100) // worker channel - get work from work queue to copy thread
+	wg       sync.WaitGroup           // waitgroup for work queue length
 )
 
 // Commandline Flags
@@ -48,6 +53,7 @@ func main() {
 
 	// initialize buffers
 	buffer = make([][BUFSIZE]byte, threads)
+	counters = make([]Counter, threads)
 
 	// Start dispatcher and copy threads
 	go dispatcher()
@@ -58,6 +64,30 @@ func main() {
 	// start copying top level directory
 	wg.Add(1)
 	dch <- ""
+
+	go func() {
+		var lastF, lastB uint64
+		//statLen := 10
+		intervalSecondCoefs := 1.0
+		start := time.Now()
+		//bars := 50
+		for {
+			time.Sleep(time.Second / time.Duration(intervalSecondCoefs))
+			var f, b uint64
+			for _, c := range counters {
+				f += c.files
+				b += c.bytes
+			}
+			sinceSec := time.Since(start).Seconds()
+			fmt.Printf("instant: %03.2fk files/s\t%02.2f GB/s\t\tavg: %03.2fk files/s\t%02.2f GB/s\n",
+				float64(f-lastF)*intervalSecondCoefs/1000,
+				float64(b-lastB)*intervalSecondCoefs/1000000000,
+				float64(f)/sinceSec/1000,
+				float64(b)/sinceSec/1000000000,
+			)
+			lastB, lastF = b, f
+		}
+	}()
 
 	// wait for work queue to get empty
 	wg.Wait()
@@ -279,13 +309,16 @@ func copyFile(id uint, file string, f os.FileInfo) {
 		defer wr.Close()
 
 		// copy data
-		_, err = io.CopyBuffer(wr, rd, buffer[id][:])
+		copied, err := io.CopyBuffer(wr, rd, buffer[id][:])
 		if err != nil {
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
 			}
 			return
 		}
+
+		counters[id].bytes += uint64(copied)
+		counters[id].files++
 
 		if owner {
 			preserveOwner(dest+file, f, "file")
