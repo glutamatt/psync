@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -29,13 +30,14 @@ type File struct {
 
 // Buffer, Channels and Synchronization
 var (
-	buffer   [][BUFSIZE]byte
-	counters []Counter
-	dch      = make(chan string, 1000) // dispatcher channel - get work into work queue
-	wch      = make(chan string, 1000) // worker channel - get work from work queue to copy thread
-	fch      = make(chan File, 1000)   // file channel
-	wg       sync.WaitGroup            // waitgroup for work queue length
-	wgf      sync.WaitGroup            // waitgroup for work queue length
+	buffer    [][BUFSIZE]byte
+	counters  []Counter
+	dch       = make(chan string, 1000) // dispatcher channel - get work into work queue
+	wch       = make(chan string, 1000) // worker channel - get work from work queue to copy thread
+	fch       = make(chan File, 1000)   // file channel
+	wg        sync.WaitGroup            // waitgroup for work queue length
+	wgf       sync.WaitGroup            // waitgroup for work queue length
+	inflights atomic.Int32
 )
 
 // Commandline Flags
@@ -88,9 +90,10 @@ func main() {
 				b += c.bytes
 			}
 			sinceSec := time.Since(start).Seconds()
-			fmt.Printf("instant: %03.3fk files/s\t%02.3f GB/s\t\tavg: %03.3fk files/s\t%02.3f GB/s\n",
+			fmt.Printf("instant: %03.3fk files/s\t%02.3f GB/s\t% 4d inflights\t\tavg: %03.3fk files/s\t%02.3f GB/s\n",
 				float64(f-lastF)*intervalSecondCoefs/1000,
 				float64(b-lastB)*intervalSecondCoefs/1000000000,
+				inflights.Load(),
 				float64(f)/sinceSec/1000,
 				float64(b)/sinceSec/1000000000,
 			)
@@ -345,7 +348,9 @@ func copyFile(id uint) {
 			defer wr.Close()
 
 			// copy data
+			inflights.Add(1)
 			_, err = io.CopyBuffer(&CounterWriter{w: wr, count: countF}, rd, buffer[id][:])
+			inflights.Add(-1)
 			if err != nil {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
