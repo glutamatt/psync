@@ -89,8 +89,12 @@ func main() {
 				f += c.files
 				b += c.bytes
 			}
-			sinceSec := time.Since(start).Seconds()
-			fmt.Printf("instant: %03.3fk files/s\t%02.3f GB/s\t% 4d inflights\t\tavg: %03.3fk files/s\t%02.3f GB/s\n",
+			since := time.Since(start)
+			sinceSec := since.Seconds()
+
+			fmt.Printf("% 8s % 4dGB\tinstant: %03.3fk files/s\t%02.3f GB/s % 4d ccp\tavg: %03.3fk files/s\t%02.3f GB/s\n",
+				since.Round(time.Second),
+				b/1000000000,
 				float64(f-lastF)*intervalSecondCoefs/1000,
 				float64(b-lastB)*intervalSecondCoefs/1000000000,
 				inflights.Load(),
@@ -117,7 +121,7 @@ func flags() {
 	flag.BoolVar(&create, "create", false, "Create destination directory, if needed (with standard permissions)")
 	flag.Parse()
 
-	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 2048 {
+	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 512 {
 		usage()
 	}
 
@@ -191,29 +195,9 @@ func dispatcher() {
 // is discovered, it is created on the destination side, and then inserted into
 // the work queue through the dispatcher channel.
 func copyDir(id uint) {
-
-	printCurrent := func(dir string) {}
-
-	{
-		if id == 0 {
-			printer := time.NewTicker(5 * time.Second)
-			under := printCurrent
-			printCurrent = func(dir string) {
-				select {
-				case <-printer.C:
-					fmt.Printf("copying: %v\n", dir)
-				default:
-				}
-
-				under(dir)
-			}
-		}
-	}
-
 	for {
 		// read next directory to handle
 		dir := <-wch
-		printCurrent(dir)
 		if verbose {
 			fmt.Printf("[%d] Handling directory %s%s\n", id, src, dir)
 		}
@@ -288,6 +272,8 @@ func copyFile(id uint) {
 		counters[id].bytes += uint64(written)
 	}
 
+	countF(0)
+
 	cpf := func(file string, f os.FileInfo) {
 		mode := f.Mode()
 		switch {
@@ -349,7 +335,9 @@ func copyFile(id uint) {
 
 			// copy data
 			inflights.Add(1)
-			_, err = io.CopyBuffer(&CounterWriter{w: wr, count: countF}, rd, buffer[id][:])
+			//fmt.Printf("f.Name(): %v\n", f.Name())
+			//_, err = io.CopyBuffer(&CounterWriter{w: wr, count: countF}, rd, buffer[id][:])
+			CopyConcurrent(int(f.Size()), wr, rd, countF)
 			inflights.Add(-1)
 			if err != nil {
 				if !quiet {
@@ -373,6 +361,57 @@ func copyFile(id uint) {
 		cpf(fcp.name, fcp.info)
 	}
 	wgf.Done()
+}
+
+func CopyConcurrent(total int, w io.WriterAt, r io.ReaderAt, countF func(written int)) {
+	parts := total/BUFSIZE + 1
+	if parts > 16 {
+		parts = 16
+	}
+	partSize := total/parts + 1
+	wg := sync.WaitGroup{}
+	wg.Add(parts)
+	written := make(chan int)
+
+	for i := 0; i < parts; i++ {
+		go func(i int) {
+			defer wg.Done()
+			var buffer [BUFSIZE]byte
+			offset := i * partSize
+			ow := &CounterWriter{w: io.NewOffsetWriter(w, int64(offset)), count: func(n int) {
+				written <- n
+			}}
+			or := &OffsetLimitReader{r: r, offset: int64(offset), max: partSize}
+			io.CopyBuffer(ow, or, buffer[:])
+		}(i)
+	}
+
+	go func() {
+		for n := range written {
+			countF(n)
+		}
+	}()
+	wg.Wait()
+	close(written)
+}
+
+type OffsetLimitReader struct {
+	r      io.ReaderAt
+	offset int64
+	max    int
+}
+
+func (olr *OffsetLimitReader) Read(p []byte) (n int, err error) {
+	if olr.max <= 0 {
+		return 0, io.EOF
+	}
+	if len(p) > olr.max {
+		p = p[:olr.max]
+	}
+	n, err = olr.r.ReadAt(p, olr.offset)
+	olr.offset += int64(n)
+	olr.max -= n
+	return
 }
 
 type CounterWriter struct {
