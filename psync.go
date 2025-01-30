@@ -88,7 +88,7 @@ func main() {
 				b += c.bytes
 			}
 			sinceSec := time.Since(start).Seconds()
-			fmt.Printf("instant: %03.2fk files/s\t%02.2f GB/s\t\tavg: %03.2fk files/s\t%02.2f GB/s\n",
+			fmt.Printf("instant: %03.3fk files/s\t%02.3f GB/s\t\tavg: %03.3fk files/s\t%02.3f GB/s\n",
 				float64(f-lastF)*intervalSecondCoefs/1000,
 				float64(b-lastB)*intervalSecondCoefs/1000000000,
 				float64(f)/sinceSec/1000,
@@ -114,7 +114,7 @@ func flags() {
 	flag.BoolVar(&create, "create", false, "Create destination directory, if needed (with standard permissions)")
 	flag.Parse()
 
-	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 1024 {
+	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 2048 {
 		usage()
 	}
 
@@ -280,6 +280,11 @@ func copyDir(id uint) {
 
 // Function copyFile copies a file from the source to the destination directory.
 func copyFile(id uint) {
+
+	countF := func(written int) {
+		counters[id].bytes += uint64(written)
+	}
+
 	cpf := func(file string, f os.FileInfo) {
 		mode := f.Mode()
 		switch {
@@ -340,7 +345,7 @@ func copyFile(id uint) {
 			defer wr.Close()
 
 			// copy data
-			copied, err := io.CopyBuffer(wr, rd, buffer[id][:])
+			_, err = io.CopyBuffer(&CounterWriter{w: wr, count: countF}, rd, buffer[id][:])
 			if err != nil {
 				if !quiet {
 					fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
@@ -348,7 +353,6 @@ func copyFile(id uint) {
 				return
 			}
 
-			counters[id].bytes += uint64(copied)
 			counters[id].files++
 
 			if owner {
@@ -364,6 +368,17 @@ func copyFile(id uint) {
 		cpf(fcp.name, fcp.info)
 	}
 	wgf.Done()
+}
+
+type CounterWriter struct {
+	w     io.Writer
+	count func(written int)
+}
+
+func (cw *CounterWriter) Write(p []byte) (n int, err error) {
+	n, err = cw.w.Write(p)
+	cw.count(n)
+	return
 }
 
 // Function preserveOwner transfers the ownership information from the source to
