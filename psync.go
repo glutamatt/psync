@@ -18,6 +18,7 @@ import (
 
 // BUFSIZE defines the size of the buffer used for copying. It is currently 64kB.
 const BUFSIZE = 1024 * 1024
+const MAX_IODEPTH = 16
 
 type Counter struct {
 	files, bytes uint64
@@ -30,7 +31,7 @@ type File struct {
 
 // Buffer, Channels and Synchronization
 var (
-	buffer    [][BUFSIZE]byte
+	buffer    [][MAX_IODEPTH][BUFSIZE]byte
 	counters  []Counter
 	dch       = make(chan string, 1000) // dispatcher channel - get work into work queue
 	wch       = make(chan string, 1000) // worker channel - get work from work queue to copy thread
@@ -61,7 +62,7 @@ func main() {
 	syscall.Umask(0000)
 
 	// initialize buffers
-	buffer = make([][BUFSIZE]byte, threads)
+	buffer = make([][MAX_IODEPTH][BUFSIZE]byte, threads)
 	counters = make([]Counter, threads)
 
 	// Start dispatcher and copy threads
@@ -335,9 +336,7 @@ func copyFile(id uint) {
 
 			// copy data
 			inflights.Add(1)
-			//fmt.Printf("f.Name(): %v\n", f.Name())
-			//_, err = io.CopyBuffer(&CounterWriter{w: wr, count: countF}, rd, buffer[id][:])
-			CopyConcurrent(int(f.Size()), wr, rd, countF)
+			CopyConcurrent(id, int(f.Size()), wr, rd, countF)
 			inflights.Add(-1)
 			if err != nil {
 				if !quiet {
@@ -364,45 +363,43 @@ func copyFile(id uint) {
 }
 
 func FileParts(totalSize, minPartSize, maxParts int) (offsets []int) {
-	parts := totalSize / minPartSize
-	reminder := totalSize % minPartSize
-	if reminder > 0 {
-		parts++
+	if totalSize <= minPartSize {
+		return []int{0, totalSize}
 	}
+	parts := totalSize / minPartSize
 	if parts > maxParts {
 		parts = maxParts
 	}
 	partSize := totalSize / parts
-	for i := 1; i < parts; i++ {
-		offsets = append(offsets, i*partSize)
+	partsWithExtra := totalSize % parts
+	offset := 0
+	offsets = []int{0}
+	for offset < totalSize {
+		offset += partSize
+		if len(offsets) <= partsWithExtra {
+			offset++
+		}
+		offsets = append(offsets, offset)
 	}
-	offsets = append(offsets, totalSize)
 	return
 }
 
-func CopyConcurrent(total int, w io.WriterAt, r io.ReaderAt, countF func(written int)) {
-	parts := total/BUFSIZE + 1
-	if parts > 16 {
-		parts = 16
-	}
-	partSize := total/parts + 1
+func CopyConcurrent(workerId uint, total int, w io.WriterAt, r io.ReaderAt, countF func(written int)) {
+	partsOffsets := FileParts(total, BUFSIZE, MAX_IODEPTH)
 	wg := sync.WaitGroup{}
-	wg.Add(parts)
+	wg.Add(len(partsOffsets) - 1)
 	written := make(chan int)
-
-	for i := 0; i < parts; i++ {
+	countWF := func(n int) { written <- n }
+	for i, end := range partsOffsets[1:] {
+		start := partsOffsets[i]
 		go func(i int) {
 			defer wg.Done()
-			var buffer [BUFSIZE]byte
-			offset := i * partSize
-			ow := &CounterWriter{w: io.NewOffsetWriter(w, int64(offset)), count: func(n int) {
-				written <- n
-			}}
-			or := &OffsetLimitReader{r: r, offset: int64(offset), max: partSize}
-			io.CopyBuffer(ow, or, buffer[:])
+			io.CopyBuffer(
+				&CounterWriter{w: io.NewOffsetWriter(w, int64(start)), count: countWF},
+				&OffsetLimitReader{r: r, offset: int64(start), max: end - start},
+				buffer[workerId][i][:])
 		}(i)
 	}
-
 	go func() {
 		for n := range written {
 			countF(n)
