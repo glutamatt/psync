@@ -363,6 +363,23 @@ func copyFile(id uint) {
 	wgf.Done()
 }
 
+func FileParts(totalSize, minPartSize, maxParts int) (offsets []int) {
+	parts := totalSize / minPartSize
+	reminder := totalSize % minPartSize
+	if reminder > 0 {
+		parts++
+	}
+	if parts > maxParts {
+		parts = maxParts
+	}
+	partSize := totalSize / parts
+	for i := 1; i < parts; i++ {
+		offsets = append(offsets, i*partSize)
+	}
+	offsets = append(offsets, totalSize)
+	return
+}
+
 func CopyConcurrent(total int, w io.WriterAt, r io.ReaderAt, countF func(written int)) {
 	parts := total/BUFSIZE + 1
 	if parts > 16 {
