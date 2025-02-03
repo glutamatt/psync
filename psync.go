@@ -203,7 +203,7 @@ func dispatcher() {
 // the work queue through the dispatcher channel.
 func copyDir(id uint) {
 	fch := make(chan File) // file channel+}
-	for i := uint(0); i < 64; i++ {
+	for i := uint(0); i < 256; i++ {
 		go copyFile(id, fch)
 	}
 
