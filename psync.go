@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -27,17 +28,18 @@ type Counter struct {
 type File struct {
 	name string
 	info os.FileInfo
+	wg   *sync.WaitGroup
 }
 
 // Buffer, Channels and Synchronization
 var (
-	buffer    [][MAX_IODEPTH][BUFSIZE]byte
-	counters  []Counter
-	dch       = make(chan string, 1000) // dispatcher channel - get work into work queue
-	wch       = make(chan string, 1000) // worker channel - get work from work queue to copy thread
-	fch       = make(chan File, 1000)   // file channel
-	wg        sync.WaitGroup            // waitgroup for work queue length
-	wgf       sync.WaitGroup            // waitgroup for work queue length
+	buffer   [][MAX_IODEPTH][BUFSIZE]byte
+	counters []Counter
+	dch      = make(chan string, 1000) // dispatcher channel - get work into work queue
+	wch      = make(chan string, 1000) // worker channel - get work from work queue to copy thread
+	//fch       = make(chan File, 1000)   // file channel
+	wg sync.WaitGroup // waitgroup for work queue length
+	//wgf       sync.WaitGroup            // waitgroup for work queue length
 	inflights atomic.Int32
 )
 
@@ -51,6 +53,8 @@ var (
 )
 
 func main() {
+
+	debug.SetMaxThreads(1_000_000)
 	// parse commandline flags
 	flags()
 
@@ -69,11 +73,11 @@ func main() {
 	go dispatcher()
 	for i := uint(0); i < threads; i++ {
 		go copyDir(i)
-		go copyFile(i)
+		//go copyFile(i)
 	}
 
 	// start copying top level directory
-	wgf.Add(int(threads))
+	//wgf.Add(int(threads))
 	wg.Add(1)
 	dch <- ""
 
@@ -110,8 +114,8 @@ func main() {
 
 	// wait for work queue to get empty
 	wg.Wait()
-	close(fch)
-	wgf.Wait()
+	//close(fch)
+	//wgf.Wait()
 }
 
 // Function flags parses the command line flags and checks them for sanity.
@@ -198,6 +202,11 @@ func dispatcher() {
 // is discovered, it is created on the destination side, and then inserted into
 // the work queue through the dispatcher channel.
 func copyDir(id uint) {
+	fch := make(chan File) // file channel+}
+	for i := uint(0); i < 64; i++ {
+		go copyFile(id, fch)
+	}
+
 	for {
 		// read next directory to handle
 		dir := <-wch
@@ -214,7 +223,7 @@ func copyDir(id uint) {
 			wg.Done()
 			continue
 		}
-
+		var wgf sync.WaitGroup
 		for _, f := range files {
 			fname := f.Name()
 			if fname == "." || fname == ".." {
@@ -242,7 +251,8 @@ func copyDir(id uint) {
 					fmt.Printf("[%d] Copying %s%s/%s to %s%s/%s\n",
 						id, src, dir, fname, dest, dir, fname)
 				}
-				fch <- File{name: dir + "/" + fname, info: f}
+				wgf.Add(1)
+				fch <- File{name: dir + "/" + fname, info: f, wg: &wgf}
 			}
 		}
 		finfo, err := os.Stat(src + dir)
@@ -266,11 +276,12 @@ func copyDir(id uint) {
 		}
 		counters[id].dirs++
 		wg.Done()
+		wgf.Wait()
 	}
 }
 
 // Function copyFile copies a file from the source to the destination directory.
-func copyFile(id uint) {
+func copyFile(id uint, fch <-chan File) {
 
 	countF := func(written int) {
 		counters[id].bytes += uint64(written)
@@ -341,12 +352,12 @@ func copyFile(id uint) {
 			inflights.Add(1)
 			CopyConcurrent(id, int(f.Size()), wr, rd, countF)
 			inflights.Add(-1)
-			if err != nil {
-				if !quiet {
-					fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
-				}
-				return
-			}
+			//if err != nil {
+			//	if !quiet {
+			//		fmt.Fprintf(os.Stderr, "WARNING - file %s could not be created: %s\n", dest+file, err)
+			//	}
+			//	return
+			//}
 
 			counters[id].files++
 
@@ -361,8 +372,8 @@ func copyFile(id uint) {
 
 	for fcp := range fch {
 		cpf(fcp.name, fcp.info)
+		fcp.wg.Done()
 	}
-	wgf.Done()
 }
 
 func FileParts(totalSize, minPartSize, maxParts int) (offsets []int) {
