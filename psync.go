@@ -21,7 +21,7 @@ const BUFSIZE = 1024 * 1024
 const MAX_IODEPTH = 16
 
 type Counter struct {
-	files, bytes uint64
+	dirs, files, bytes uint64
 }
 
 type File struct {
@@ -78,31 +78,33 @@ func main() {
 	dch <- ""
 
 	go func() {
-		var lastF, lastB uint64
+		var lastD, lastF, lastB uint64
 		//statLen := 10
 		intervalSecondCoefs := 1.0
 		start := time.Now()
 		//bars := 50
 		for {
 			time.Sleep(time.Second / time.Duration(intervalSecondCoefs))
-			var f, b uint64
+			var d, f, b uint64
 			for _, c := range counters {
 				f += c.files
 				b += c.bytes
+				d += c.dirs
 			}
 			since := time.Since(start)
 			sinceSec := since.Seconds()
 
-			fmt.Printf("% 8s % 4dGB\tinstant: %03.3fk files/s\t%02.3f GB/s % 4d ccp\tavg: %03.3fk files/s\t%02.3f GB/s\n",
+			fmt.Printf("% 8s % 4dGB [instant: % 4d dirs/s\t% 4d files/s\t% 2.3f GB/s % 4d ccp]\t[avg: % 4d files/s % 2.3f GB/s]\n",
 				since.Round(time.Second),
 				b/1000000000,
-				float64(f-lastF)*intervalSecondCoefs/1000,
+				int(float64(d-lastD)*intervalSecondCoefs),
+				int(float64(f-lastF)*intervalSecondCoefs),
 				float64(b-lastB)*intervalSecondCoefs/1000000000,
 				inflights.Load(),
-				float64(f)/sinceSec/1000,
+				int(float64(f)/sinceSec),
 				float64(b)/sinceSec/1000000000,
 			)
-			lastB, lastF = b, f
+			lastD, lastB, lastF = d, b, f
 		}
 	}()
 
@@ -122,7 +124,7 @@ func flags() {
 	flag.BoolVar(&create, "create", false, "Create destination directory, if needed (with standard permissions)")
 	flag.Parse()
 
-	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 512 {
+	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 1024 {
 		usage()
 	}
 
@@ -262,6 +264,7 @@ func copyDir(id uint) {
 		if verbose {
 			fmt.Printf("[%d] Finished directory %s%s\n", id, src, dir)
 		}
+		counters[id].dirs++
 		wg.Done()
 	}
 }
