@@ -20,6 +20,7 @@ import (
 // BUFSIZE defines the size of the buffer used for copying. It is currently 64kB.
 const BUFSIZE = 1024 * 1024
 const MAX_IODEPTH = 16
+const MAX_THREADS = 1024
 
 type Counter struct {
 	dirs, files, bytes uint64
@@ -120,7 +121,7 @@ func main() {
 
 // Function flags parses the command line flags and checks them for sanity.
 func flags() {
-	flag.UintVar(&threads, "threads", 16, "Number of threads to run in parallel")
+	flag.UintVar(&threads, "threads", MAX_THREADS, "Number of threads to run in parallel")
 	flag.BoolVar(&verbose, "verbose", false, "Verbose mode")
 	flag.BoolVar(&quiet, "quiet", false, "Quiet mode")
 	flag.BoolVar(&times, "times", false, "Preserve time stamps")
@@ -128,12 +129,12 @@ func flags() {
 	flag.BoolVar(&create, "create", false, "Create destination directory, if needed (with standard permissions)")
 	flag.Parse()
 
-	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > 1024 {
+	if flag.NArg() != 2 || flag.Arg(0) == "" || flag.Arg(1) == "" || threads > MAX_THREADS {
 		usage()
 	}
 
 	if threads == 0 {
-		threads = 16
+		threads = MAX_THREADS
 	}
 	src = flag.Arg(0)
 	dest = flag.Arg(1)
