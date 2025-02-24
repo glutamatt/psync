@@ -276,8 +276,8 @@ func copyDir(id uint) {
 			fmt.Printf("[%d] Finished directory %s%s\n", id, src, dir)
 		}
 		counters[id].dirs++
-		wg.Done()
 		wgf.Wait()
+		wg.Done()
 	}
 }
 
