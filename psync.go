@@ -256,6 +256,7 @@ func copyDir(id uint) {
 				fch <- File{name: dir + "/" + fname, info: f, wg: &wgf}
 			}
 		}
+		wgf.Wait()
 		finfo, err := os.Stat(src + dir)
 		if err != nil {
 			if !quiet {
@@ -276,7 +277,6 @@ func copyDir(id uint) {
 			fmt.Printf("[%d] Finished directory %s%s\n", id, src, dir)
 		}
 		counters[id].dirs++
-		wgf.Wait()
 		wg.Done()
 	}
 }
@@ -483,6 +483,7 @@ func preserveTimes(name string, f os.FileInfo, ftype string) {
 	if stat, ok := f.Sys().(*syscall.Stat_t); ok {
 		atime = time.Unix(int64(stat.Atim.Sec), int64(stat.Atim.Nsec))
 	}
+	//fmt.Printf("name: %v %v\n", name, mtime)
 	err := os.Chtimes(name, atime, mtime)
 	if err != nil && !quiet {
 		fmt.Fprintf(os.Stderr, "WARNING - could not change timestamps for %s %s: %s\n",
