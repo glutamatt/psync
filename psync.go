@@ -234,7 +234,7 @@ func copyDir(id uint) {
 			if f.IsDir() {
 				// create directory on destination side
 				perm := f.Mode().Perm()
-				err := os.Mkdir(dest+dir+"/"+fname, perm)
+				err := os.MkdirAll(dest+dir+"/"+fname, perm)
 				if err != nil {
 					if !quiet {
 						fmt.Fprintf(os.Stderr, "WARNING - could not create directory %s: %s\n",
