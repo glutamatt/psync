@@ -85,11 +85,11 @@ func main() {
 	go func() {
 		var lastD, lastF, lastB uint64
 		//statLen := 10
-		intervalSecondCoefs := 1.0
+		intervalSeconds := 5.0
 		start := time.Now()
 		//bars := 50
 		for {
-			time.Sleep(time.Second / time.Duration(intervalSecondCoefs))
+			time.Sleep(time.Second * time.Duration(intervalSeconds))
 			var d, f, b uint64
 			for _, c := range counters {
 				f += c.files
@@ -98,16 +98,16 @@ func main() {
 			}
 			since := time.Since(start)
 			sinceSec := since.Seconds()
-
-			fmt.Printf("% 8s % 4dGB [instant: % 4d dirs/s\t% 4d files/s\t% 2.3f GB/s % 4d ccp]\t[avg: % 4d files/s % 2.3f GB/s]\n",
+			fmt.Printf("% 8s % 4dGB [instant: % 4d dirs/s\t% 4d files/s\t% 2.3f GB/s % 4d ccp]\t[avg: % 4d files/s % 2.3f GB/s] %s -> %s\n",
 				since.Round(time.Second),
 				b/1000000000,
-				int(float64(d-lastD)*intervalSecondCoefs),
-				int(float64(f-lastF)*intervalSecondCoefs),
-				float64(b-lastB)*intervalSecondCoefs/1000000000,
+				int(float64(d-lastD)/intervalSeconds),
+				int(float64(f-lastF)/intervalSeconds),
+				float64(b-lastB)/intervalSeconds/1000000000,
 				inflights.Load(),
 				int(float64(f)/sinceSec),
 				float64(b)/sinceSec/1000000000,
+				src, dest,
 			)
 			lastD, lastB, lastF = d, b, f
 		}
