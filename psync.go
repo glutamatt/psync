@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"runtime/debug"
 	"sync"
@@ -215,8 +214,9 @@ func copyDir(id uint) {
 			fmt.Printf("[%d] Handling directory %s%s\n", id, src, dir)
 		}
 
-		// read directory content
-		files, err := ioutil.ReadDir(src + dir)
+		os.ReadDir(src + dir)
+
+		openedDir, err := os.Open(src + dir)
 		if err != nil {
 			if !quiet {
 				fmt.Fprintf(os.Stderr, "WARNING - could not read directory %s: %s\n", src+dir, err)
@@ -224,38 +224,55 @@ func copyDir(id uint) {
 			wg.Done()
 			continue
 		}
-		var wgf sync.WaitGroup
-		for _, f := range files {
-			fname := f.Name()
-			if fname == "." || fname == ".." {
-				continue
-			}
 
-			if f.IsDir() {
-				// create directory on destination side
-				perm := f.Mode().Perm()
-				err := os.MkdirAll(dest+dir+"/"+fname, perm)
+		var wgf sync.WaitGroup
+		for {
+			entries, err := openedDir.ReadDir(1000)
+			if err != nil || len(entries) == 0 {
+				if err != io.EOF {
+					fmt.Fprintf(os.Stderr, "WARNING - failed to read directory %s: %s\n", src+dir, err)
+				}
+				break
+			}
+			for _, entry := range entries {
+				f, err := entry.Info()
 				if err != nil {
 					if !quiet {
-						fmt.Fprintf(os.Stderr, "WARNING - could not create directory %s: %s\n",
-							dest+dir+"/"+fname, err)
+						fmt.Fprintf(os.Stderr, "WARNING - could not read directory %s: %s\n", src+dir, err)
 					}
 					continue
 				}
-
-				// submit directory to work queue
-				wg.Add(1)
-				dch <- dir + "/" + fname
-			} else {
-				// copy file sequentially
-				if verbose {
-					fmt.Printf("[%d] Copying %s%s/%s to %s%s/%s\n",
-						id, src, dir, fname, dest, dir, fname)
+				fname := f.Name()
+				if fname == "." || fname == ".." {
+					continue
 				}
-				wgf.Add(1)
-				fch <- File{name: dir + "/" + fname, info: f, wg: &wgf}
+
+				if f.IsDir() {
+					// create directory on destination side
+					perm := f.Mode().Perm()
+					err := os.MkdirAll(dest+dir+"/"+fname, perm)
+					if err != nil {
+						if !quiet {
+							fmt.Fprintf(os.Stderr, "WARNING - could not create directory %s: %s\n",
+								dest+dir+"/"+fname, err)
+						}
+						continue
+					}
+					// submit directory to work queue
+					wg.Add(1)
+					dch <- dir + "/" + fname
+				} else {
+					// copy file sequentially
+					if verbose {
+						fmt.Printf("[%d] Copying %s%s/%s to %s%s/%s\n",
+							id, src, dir, fname, dest, dir, fname)
+					}
+					wgf.Add(1)
+					fch <- File{name: dir + "/" + fname, info: f, wg: &wgf}
+				}
 			}
 		}
+
 		wgf.Wait()
 		finfo, err := os.Stat(src + dir)
 		if err != nil {
