@@ -97,9 +97,10 @@ func main() {
 			}
 			since := time.Since(start)
 			sinceSec := since.Seconds()
-			fmt.Printf("% 8s % 4dGB [instant: % 4d dirs/s\t% 4d files/s\t% 2.3f GB/s % 4d ccp]\t[avg: % 4d files/s % 2.3f GB/s] %s -> %s\n",
+			fmt.Printf("% 8s: % 4dGB - %s files - %s dirs [instant: % 4d dirs/s\t% 4d files/s\t% 2.3f GB/s % 4d ccp] [avg: % 4d files/s % 2.3f GB/s] %s -> %s\n",
 				since.Round(time.Second),
 				b/1000000000,
+				formatBigNum(f), formatBigNum(d),
 				int(float64(d-lastD)/intervalSeconds),
 				int(float64(f-lastF)/intervalSeconds),
 				float64(b-lastB)/intervalSeconds/1000000000,
@@ -116,6 +117,21 @@ func main() {
 	wg.Wait()
 	//close(fch)
 	//wgf.Wait()
+}
+
+func formatBigNum(n uint64) string {
+	if n < 1000 {
+		return fmt.Sprint(n)
+	}
+
+	if n < 1000000 {
+		return fmt.Sprintf("% 3.1fk", float32(n)/1000)
+	}
+	if n < 1000000000 {
+		return fmt.Sprintf("% 3.1fM", float32(n)/1000000)
+	}
+
+	return fmt.Sprintf("% 3.1fB", float32(n)/1000000000)
 }
 
 // Function flags parses the command line flags and checks them for sanity.
