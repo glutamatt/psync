@@ -37,6 +37,7 @@ var (
 	counters []Counter
 	dch      = make(chan string, 1000) // dispatcher channel - get work into work queue
 	wch      = make(chan string, 1000) // worker channel - get work from work queue to copy thread
+	fch      = make(chan File)         // file channel+}
 	//fch       = make(chan File, 1000)   // file channel
 	wg sync.WaitGroup // waitgroup for work queue length
 	//wgf       sync.WaitGroup            // waitgroup for work queue length
@@ -73,7 +74,7 @@ func main() {
 	go dispatcher()
 	for i := uint(0); i < threads; i++ {
 		go copyDir(i)
-		//go copyFile(i)
+		go copyFile(i, fch)
 	}
 
 	// start copying top level directory
@@ -218,11 +219,6 @@ func dispatcher() {
 // is discovered, it is created on the destination side, and then inserted into
 // the work queue through the dispatcher channel.
 func copyDir(id uint) {
-	fch := make(chan File) // file channel+}
-	for i := uint(0); i < 256; i++ {
-		go copyFile(id, fch)
-	}
-
 	for {
 		// read next directory to handle
 		dir := <-wch

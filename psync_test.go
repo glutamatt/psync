@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
 	"strings"
@@ -75,4 +76,29 @@ func TestFilePartsStartEnd(t *testing.T) {
 		start := partsOffsets[i]
 		fmt.Printf("%v -> %v\n", start, end)
 	}
+}
+
+type FakeWriterAt struct {
+	b []byte
+}
+
+func (fw *FakeWriterAt) WriteAt(p []byte, offset int64) (n int, err error) {
+	copy(fw.b[offset:], p)
+	return len(p), nil
+}
+
+func TestCopyConcurrent(t *testing.T) {
+	src := make([]byte, BUFSIZE*MAX_IODEPTH*2)
+	rand.Read(src)
+	out := make([]byte, len(src))
+	w := &FakeWriterAt{b: out}
+	buffer = make([][MAX_IODEPTH][BUFSIZE]byte, 1)
+	CopyConcurrent(0, len(src), w, strings.NewReader(string(src)), func(written int) {
+		//fmt.Printf("written bytes: %v\n", written)
+	})
+	if string(out) != string(src) {
+		t.Fail()
+	}
+	fmt.Printf("string(src[:10]): %x\n", string(src[:100]))
+	fmt.Printf("string(out[:10]): %x\n", string(out[:100]))
 }
