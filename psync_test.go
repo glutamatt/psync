@@ -76,3 +76,31 @@ func TestFilePartsStartEnd(t *testing.T) {
 		fmt.Printf("%v -> %v\n", start, end)
 	}
 }
+
+type FakeWriterAt struct {
+	b []byte
+}
+
+func (fw *FakeWriterAt) WriteAt(p []byte, offset int64) (n int, err error) {
+	fmt.Printf("w: '%v' at %d\n", string(p), offset)
+	copy(fw.b[offset:], p)
+
+	return len(p), nil
+}
+
+func TestCopyConcurrent(t *testing.T) {
+	src := "YOMANCAVA BIEN ??? ca claque du slip de fou"
+	out := make([]byte, len(src))
+	ioDepth := 16
+	bufSize := 8
+	buffers := make([][]byte, ioDepth)
+	for i := range buffers {
+		buffers[i] = make([]byte, bufSize)
+	}
+	w := &FakeWriterAt{b: out}
+	CopyConcurrent(len(src), w, strings.NewReader(src), func(written int) { fmt.Printf("written bytes: %v\n", written) }, bufSize, ioDepth)
+	fmt.Printf("out: '%v'\n", string(out))
+	if string(out) != src {
+		t.Fail()
+	}
+}
