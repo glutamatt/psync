@@ -18,8 +18,8 @@ import (
 
 // BUFSIZE defines the size of the buffer used for copying. It is currently 64kB.
 const BUFSIZE = 1024 * 1024
-const MAX_IODEPTH = 16
-const MAX_THREADS = 1024
+const MAX_IODEPTH = 1
+const MAX_THREADS = 2048
 
 type Counter struct {
 	dirs, files, bytes uint64
@@ -384,7 +384,9 @@ func copyFile(id uint, fch <-chan File) {
 
 			// copy data
 			inflights.Add(1)
-			CopyConcurrent(id, int(f.Size()), wr, rd, countF)
+			counterWriter := &CounterWriter{count: countF, w: wr}
+			io.CopyBuffer(counterWriter, rd, buffer[id][0][:])
+			//CopyConcurrent(id, int(f.Size()), wr, rd, countF)
 			inflights.Add(-1)
 			//if err != nil {
 			//	if !quiet {
