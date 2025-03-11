@@ -226,8 +226,6 @@ func copyDir(id uint) {
 			fmt.Printf("[%d] Handling directory %s%s\n", id, src, dir)
 		}
 
-		os.ReadDir(src + dir)
-
 		openedDir, err := os.Open(src + dir)
 		if err != nil {
 			if !quiet {
