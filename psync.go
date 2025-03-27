@@ -1,3 +1,4 @@
+// export GOMEMLIMIT=512MiB GOGC=off CRAWL_WORKERS=128 # sudo -E ./psync
 package main
 
 import (
@@ -5,7 +6,9 @@ import (
 	"io"
 	"os"
 	"os/user"
+	"runtime"
 	"syscall"
+	"time"
 )
 
 type Stat struct{ size, files int64 }
@@ -54,9 +57,8 @@ func crawlDir(dir string, tasks chan<- Task) (stats Stats) {
 			}
 
 			if f.IsDir() {
-				task := Task{dir: dir + "/" + f.Name(), stats: async}
 				select {
-				case tasks <- task:
+				case tasks <- Task{dir: dir + "/" + f.Name(), stats: async}:
 					asyncCount++
 				default:
 					stats.Add(crawlDir(dir+"/"+f.Name(), tasks))
@@ -76,30 +78,36 @@ func crawlDir(dir string, tasks chan<- Task) (stats Stats) {
 	for i := 0; i < asyncCount; i++ {
 		stats.Add(<-async)
 	}
+	close(async)
 
 	return
 }
 
 func main() {
-
 	tasks := make(chan Task)
-
 	workers := 1000
-
 	if w := os.Getenv("CRAWL_WORKERS"); w != "" {
-		fmt.Scanf("%d", &workers)
+		fmt.Sscanf(w, "%d", &workers)
 		if workers > 1000 || workers < 1 {
 			panic(fmt.Errorf("worker pool size must be between 1 and 1000"))
 		}
 	}
 
-	for i := 0; i < 1000; i++ {
+	fmt.Fprintf(os.Stderr, "intiating %d workers\n", workers)
+	for i := 0; i < workers; i++ {
 		go func() {
 			for task := range tasks {
 				task.stats <- crawlDir(task.dir, tasks)
 			}
 		}()
 	}
+
+	go func() {
+		for {
+			time.Sleep(2 * time.Second)
+			PrintMemUsage()
+		}
+	}()
 
 	async := make(chan Stats)
 	for _, d := range os.Args[1:] {
@@ -137,4 +145,13 @@ func formatBigNum(n uint64) string {
 		return fmt.Sprintf("% 3.1fG", float32(n)/1_000_000_000)
 	}
 	return fmt.Sprintf("% 3.1fT", float32(n)/1_000_000_000_000)
+}
+
+func PrintMemUsage() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Printf("Alloc = %v MiB", m.Alloc/1024/1024)
+	fmt.Printf("\tTotalAlloc = %v MiB", m.TotalAlloc/1024/1024)
+	fmt.Printf("\tSys = %v MiB", m.Sys/1024/1024)
+	fmt.Printf("\tNumGC = %v\n", m.NumGC)
 }
