@@ -6,10 +6,11 @@ import (
 	"io"
 	"os"
 	"os/user"
-	"runtime"
+	"runtime/debug"
 	"syscall"
-	"time"
 )
+
+const MAX_WORKERS = 5000
 
 type Stat struct{ size, files int64 }
 
@@ -84,12 +85,16 @@ func crawlDir(dir string, tasks chan<- Task) (stats Stats) {
 }
 
 func main() {
+
+	debug.SetMemoryLimit(1_000_000_000)
+	debug.SetGCPercent(-1)
+
 	tasks := make(chan Task)
-	workers := 1000
+	workers := MAX_WORKERS
 	if w := os.Getenv("CRAWL_WORKERS"); w != "" {
 		fmt.Sscanf(w, "%d", &workers)
-		if workers > 1000 || workers < 1 {
-			panic(fmt.Errorf("worker pool size must be between 1 and 1000"))
+		if workers > MAX_WORKERS || workers < 1 {
+			panic(fmt.Errorf("worker pool size must be between 1 and %d", MAX_WORKERS))
 		}
 	}
 
@@ -101,13 +106,6 @@ func main() {
 			}
 		}()
 	}
-
-	go func() {
-		for {
-			time.Sleep(2 * time.Second)
-			PrintMemUsage()
-		}
-	}()
 
 	async := make(chan Stats)
 	for _, d := range os.Args[1:] {
@@ -145,13 +143,4 @@ func formatBigNum(n uint64) string {
 		return fmt.Sprintf("% 3.1fG", float32(n)/1_000_000_000)
 	}
 	return fmt.Sprintf("% 3.1fT", float32(n)/1_000_000_000_000)
-}
-
-func PrintMemUsage() {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	fmt.Printf("Alloc = %v MiB", m.Alloc/1024/1024)
-	fmt.Printf("\tTotalAlloc = %v MiB", m.TotalAlloc/1024/1024)
-	fmt.Printf("\tSys = %v MiB", m.Sys/1024/1024)
-	fmt.Printf("\tNumGC = %v\n", m.NumGC)
 }
