@@ -27,7 +27,6 @@ func (stats *Stats) Add(other Stats) {
 }
 
 func (stats *Stats) FPrint(w io.Writer) {
-
 	ids := make([]uint32, 0, len(*stats))
 	for uID := range *stats {
 		ids = append(ids, uID)
@@ -101,7 +100,6 @@ func crawlDir(dir string, tasks chan<- Task) (stats Stats) {
 	for i := 0; i < asyncCount; i++ {
 		stats.Add(<-async)
 	}
-	close(async)
 
 	return
 }
