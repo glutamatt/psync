@@ -86,6 +86,10 @@ func crawlDir(dir string, tasks chan<- Task) (stats Stats) {
 
 func main() {
 
+	{
+		os.Exit(0)
+	}
+
 	debug.SetMemoryLimit(1_000_000_000)
 	debug.SetGCPercent(-1)
 
