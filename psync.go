@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"runtime/debug"
+	"slices"
 	"syscall"
 )
 
@@ -22,6 +23,27 @@ func (stats *Stats) Add(other Stats) {
 		stat.files += s.files
 		stat.size += s.size
 		(*stats)[u] = stat
+	}
+}
+
+func (stats *Stats) FPrint(w io.Writer) {
+
+	ids := make([]uint32, 0, len(*stats))
+	for uID := range *stats {
+		ids = append(ids, uID)
+	}
+	slices.SortFunc(ids, func(a, b uint32) int { return int((*stats)[b].size - (*stats)[a].size) })
+
+	for _, uID := range ids {
+		stat := (*stats)[uID]
+		userName := fmt.Sprint(uID)
+		if u, err := user.LookupId(fmt.Sprint(uID)); err == nil {
+			userName = u.Username
+			if u.Name != "" {
+				userName += " (" + u.Name + ")"
+			}
+		}
+		fmt.Fprintf(w, "% 50s => % 5s\n", userName, formatBigNum(uint64(stat.size)))
 	}
 }
 
@@ -86,10 +108,6 @@ func crawlDir(dir string, tasks chan<- Task) (stats Stats) {
 
 func main() {
 
-	{
-		os.Exit(0)
-	}
-
 	debug.SetMemoryLimit(1_000_000_000)
 	debug.SetGCPercent(-1)
 
@@ -121,16 +139,7 @@ func main() {
 		stats.Add(<-async)
 	}
 
-	for uID, stat := range stats {
-		userName := fmt.Sprint(uID)
-		if u, err := user.LookupId(fmt.Sprint(uID)); err == nil {
-			userName = u.Username
-			if u.Name != "" {
-				userName += " (" + u.Name + ")"
-			}
-		}
-		fmt.Printf("% 50s => % 5s\n", userName, formatBigNum(uint64(stat.size)))
-	}
+	stats.FPrint(os.Stdout)
 }
 
 func formatBigNum(n uint64) string {
