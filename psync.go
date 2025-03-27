@@ -43,7 +43,7 @@ func (stats *Stats) FPrint(w io.Writer) {
 				userName += " (" + u.Name + ")"
 			}
 		}
-		fmt.Fprintf(w, "% 50s => % 5s\n", userName, formatBigNum(uint64(stat.size)))
+		fmt.Fprintf(w, "% 50s => % 5sB (% 5s files)\n", userName, formatBigNum(uint64(stat.size)), formatBigNum(uint64(stat.files)))
 	}
 }
 
